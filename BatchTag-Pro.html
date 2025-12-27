@@ -1,0 +1,299 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>BatchTag PRO | Fixed Layout</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary: #2563eb; --primary-soft: #eff6ff;
+            --bg: #f1f5f9; --surface: #ffffff;
+            --border: #e2e8f0; --text: #1e293b; --danger: #ef4444; --success: #10b981;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--text); height: 100vh; overflow: hidden; }
+        
+        .app-shell { display: grid; grid-template-columns: 280px 1fr 360px; height: 100vh; }
+        .sidebar { background: var(--surface); border-right: 1px solid var(--border); padding: 24px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
+        .sidebar-right { border-left: 1px solid var(--border); border-right: none; }
+
+        .canvas { position: relative; display: flex; flex-direction: column; padding: 20px; overflow: hidden; }
+        .gallery-scroll { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 20px; overflow-y: auto; flex-grow: 1; padding: 10px; z-index: 5; }
+        
+        .img-card { 
+            background: white; border-radius: 12px; border: 2px solid transparent; 
+            padding: 8px; position: relative; box-shadow: 0 4px 10px rgba(0,0,0,0.05); 
+            cursor: pointer; user-select: none; transition: 0.1s;
+            height: 200px; display: flex; flex-direction: column;
+        }
+        .img-card.selected { border-color: var(--primary); background: var(--primary-soft); }
+        .img-card img { width: 100%; height: 110px; object-fit: cover; border-radius: 8px; pointer-events: none; flex-shrink: 0; }
+        
+        .name-container { 
+            margin-top: 8px; 
+            text-align: center; 
+            overflow: hidden; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: center;
+            flex-grow: 1;
+        }
+        
+        /* SOLUCIÓN AL DESBORDE */
+        .txt-new, .txt-orig {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis; /* Añade los "..." */
+            width: 100%;
+            display: block;
+        }
+
+        .txt-new { font-size: 11px; color: var(--primary); font-weight: 700; min-height: 14px; }
+        .txt-orig { font-size: 9px; color: #94a3b8; margin-top: 2px; }
+
+        .tags-area { 
+            border: 2px solid var(--border); border-radius: 10px; padding: 12px; 
+            display: flex; flex-wrap: wrap; gap: 8px; min-height: 100px; 
+            background: #fff; cursor: text; align-content: flex-start;
+        }
+        .tag-pill { background: var(--primary); color: white; padding: 4px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+        .tag-x { cursor: pointer; font-weight: bold; background: rgba(0,0,0,0.2); border-radius: 50%; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; }
+
+        .input-field { padding: 10px; border-radius: 8px; border: 1px solid var(--border); width: 100%; font-size: 14px; margin-bottom: 8px; }
+        .btn { padding: 12px; border-radius: 8px; border: none; font-weight: 700; cursor: pointer; font-size: 13px; }
+        .btn-primary { background: var(--primary); color: white; width: 100%; }
+        .btn-success { background: var(--success); color: white; width: 100%; }
+        .btn-outline { background: white; border: 1px solid var(--border); width: 100%; }
+
+        #marquee { position: absolute; border: 1px solid var(--primary); background: rgba(37, 99, 235, 0.15); pointer-events: none; display: none; z-index: 1000; }
+        label { font-size: 11px; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 5px; display: block; }
+    </style>
+</head>
+<body>
+
+<div id="marquee"></div>
+
+<div class="app-shell">
+    <aside class="sidebar">
+        <h2>BatchTag PRO</h2>
+        <div style="background: var(--bg); padding: 12px; border-radius: 8px;">
+            <p>Fotos: <b id="ui-total">0</b></p>
+            <p>Seleccionadas: <b id="ui-sel" style="color:var(--primary)">0</b></p>
+        </div>
+        <button class="btn btn-primary" onclick="document.getElementById('f-in').click()">+ Añadir</button>
+        <input type="file" id="f-in" multiple accept="image/*" style="display:none">
+        <button class="btn btn-outline" onclick="selectAll(true)">Seleccionar Todo</button>
+        <button class="btn btn-outline" onclick="selectAll(false)">Deseleccionar Todo</button>
+        <button class="btn btn-outline" style="color:var(--danger); margin-top:auto" onclick="clearAll()">Vaciar Galería</button>
+    </aside>
+
+    <main class="canvas" id="canvas-area">
+        <div class="gallery-scroll" id="gallery-root"></div>
+    </main>
+
+    <aside class="sidebar sidebar-right">
+        <label>1. Tags (Haz clic para escribir)</label>
+        <div class="tags-area" id="tag-root" onclick="document.getElementById('tag-input').focus()">
+            <input type="text" id="tag-input" placeholder="..." style="border:none; outline:none; flex:1; min-width:60px; font-size: 14px;">
+        </div>
+
+        <div style="margin-top:15px">
+            <label>2. Fecha (Opcional)</label>
+            <div style="display:flex; gap:8px; align-items:center;">
+                <input type="checkbox" id="use-date" checked onchange="render()">
+                <input type="date" id="cfg-date" class="input-field" style="margin-bottom:0" oninput="render()">
+            </div>
+
+            <label style="margin-top:15px">3. Orden del Nombre</label>
+            <select id="cfg-style" class="input-field" onchange="render()">
+                <option value="dtn">Fecha + Tags + Núm</option>
+                <option value="tdn">Tags + Fecha + Núm</option>
+                <option value="ntd">Núm + Tags + Fecha</option>
+            </select>
+            
+            <div style="display:flex; gap:5px;">
+                <select id="cfg-sep" class="input-field" onchange="render()">
+                    <option value="-">-</option><option value="_">_</option><option value=".">.</option>
+                </select>
+                <select id="cfg-pad" class="input-field" onchange="render()">
+                    <option value="1">1 dígito</option><option value="2">2 dígitos</option><option value="3">3 dígitos</option><option value="4" selected>4 dígitos</option>
+                </select>
+            </div>
+            <input type="number" id="cfg-start" value="1" class="input-field" placeholder="Empieza en..." oninput="render()">
+        </div>
+
+        <button class="btn btn-success" onclick="saveNames()" style="margin-top:10px;">💾 GUARDAR NOMBRES</button>
+        <hr style="margin: 15px 0; border: 0; border-top: 1px solid var(--border);">
+        <button class="btn btn-primary" onclick="downloadZip(true)">📦 DESCARGAR SELECCIÓN</button>
+        <button class="btn btn-outline" onclick="downloadZip(false)" style="margin-top:8px">📥 DESCARGAR TODO</button>
+    </aside>
+</div>
+
+<script>
+    let db = [];
+    let isCtrl = false;
+    document.getElementById('cfg-date').valueAsDate = new Date();
+
+    window.onkeydown = e => { if(e.key === "Control" || e.metaKey) isCtrl = true; };
+    window.onkeyup = e => { if(e.key === "Control" || e.metaKey) isCtrl = false; };
+
+    const canvas = document.getElementById('canvas-area');
+    canvas.ondragover = e => e.preventDefault();
+    canvas.ondrop = async e => {
+        e.preventDefault();
+        for (let item of e.dataTransfer.items) {
+            const entry = item.webkitGetAsEntry();
+            if (entry) await traverse(entry);
+        }
+    };
+
+    async function traverse(entry) {
+        if (entry.isFile) {
+            const file = await new Promise(r => entry.file(r));
+            if (file.type.startsWith('image/')) addFile(file);
+        } else if (entry.isDirectory) {
+            const reader = entry.createReader();
+            const entries = await new Promise(r => reader.readEntries(r));
+            for (let e of entries) await traverse(e);
+        }
+    }
+
+    function addFile(file) {
+        const reader = new FileReader();
+        reader.onload = e => {
+            db.push({ id: crypto.randomUUID(), file, src: e.target.result, origName: file.name, ext: file.name.split('.').pop(), tags: [], selected: false, fixedName: null });
+            render();
+        };
+        reader.readAsDataURL(file);
+    }
+
+    document.getElementById('f-in').onchange = e => Array.from(e.target.files).forEach(addFile);
+
+    function toggleItem(id, e) {
+        const item = db.find(p => p.id === id);
+        if (!isCtrl) {
+            const wasSelected = item.selected;
+            db.forEach(p => p.selected = false);
+            item.selected = !wasSelected || true;
+        } else {
+            item.selected = !item.selected;
+        }
+        render();
+    }
+
+    const marquee = document.getElementById('marquee');
+    let mDown = false, sX, sY;
+
+    canvas.onmousedown = e => {
+        if (e.target !== canvas && e.target.id !== 'gallery-root') return;
+        mDown = true; sX = e.pageX; sY = e.pageY;
+        marquee.style.display = 'block';
+        if (!isCtrl) db.forEach(p => p.selected = false);
+    };
+
+    window.onmousemove = e => {
+        if (!mDown) return;
+        let l = Math.min(sX, e.pageX), t = Math.min(sY, e.pageY), w = Math.abs(sX - e.pageX), h = Math.abs(sY - e.pageY);
+        marquee.style.left = l + 'px'; marquee.style.top = t + 'px'; marquee.style.width = w + 'px'; marquee.style.height = h + 'px';
+        const mRect = marquee.getBoundingClientRect();
+        db.forEach(p => {
+            const el = document.querySelector(`[data-id="${p.id}"]`);
+            if (el) {
+                const r = el.getBoundingClientRect();
+                if (!(r.right < mRect.left || r.left > mRect.right || r.bottom < mRect.top || r.top > mRect.bottom)) p.selected = true;
+            }
+        });
+        updateStats();
+    };
+
+    window.onmouseup = () => { if(mDown) { mDown = false; marquee.style.display = 'none'; render(); } };
+
+    function render() {
+        const useDate = document.getElementById('use-date').checked;
+        const dateVal = document.getElementById('cfg-date').value;
+        const style = document.getElementById('cfg-style').value;
+        const sep = document.getElementById('cfg-sep').value;
+        const pad = parseInt(document.getElementById('cfg-pad').value);
+        const start = parseInt(document.getElementById('cfg-start').value) || 1;
+
+        let selIdx = 0;
+        db.forEach(p => {
+            if (p.selected) {
+                const numStr = (start + selIdx).toString().padStart(pad, '0');
+                selIdx++;
+                const tagsStr = p.tags.join(sep);
+                let parts = (style === 'dtn') ? [useDate?dateVal:null, tagsStr, numStr] : (style === 'tdn') ? [tagsStr, useDate?dateVal:null, numStr] : [numStr, tagsStr, useDate?dateVal:null];
+                p.currentName = parts.filter(x => x).join(sep) + "." + p.ext;
+            } else {
+                p.currentName = p.fixedName || "";
+            }
+        });
+
+        const root = document.getElementById('gallery-root');
+        root.innerHTML = '';
+        db.forEach(p => {
+            const card = document.createElement('div');
+            card.className = `img-card ${p.selected ? 'selected' : ''}`;
+            card.dataset.id = p.id;
+            card.onclick = (e) => toggleItem(p.id, e);
+            card.innerHTML = `<img src="${p.src}"><div class="name-container"><div class="txt-new" title="${p.currentName}">${p.currentName}</div><div class="txt-orig" title="${p.origName}">${p.origName}</div></div>`;
+            root.appendChild(card);
+        });
+
+        renderTags();
+        updateStats();
+    }
+
+    const tagInput = document.getElementById('tag-input');
+    tagInput.onkeydown = e => {
+        if (e.key === 'Enter' && tagInput.value.trim()) {
+            const val = tagInput.value.trim();
+            db.filter(p => p.selected).forEach(p => { if(!p.tags.includes(val)) p.tags.push(val); });
+            tagInput.value = ''; render();
+        }
+    };
+
+    function renderTags() {
+        const container = document.getElementById('tag-root');
+        container.querySelectorAll('.tag-pill').forEach(el => el.remove());
+        const sel = db.filter(p => p.selected);
+        if (sel.length) {
+            [...new Set(sel.flatMap(p => p.tags))].forEach(tag => {
+                const pill = document.createElement('div');
+                pill.className = 'tag-pill';
+                pill.innerHTML = `${tag}<span class="tag-x" onclick="event.stopPropagation(); removeTag('${tag}')">×</span>`;
+                container.insertBefore(pill, tagInput);
+            });
+        }
+    }
+
+    function removeTag(t) {
+        db.filter(p => p.selected).forEach(p => p.tags = p.tags.filter(tag => tag !== t));
+        render();
+    }
+
+    function saveNames() {
+        db.filter(p => p.selected).forEach(p => { if(p.currentName) { p.fixedName = p.currentName; p.origName = "✓ " + p.currentName; } });
+        render();
+    }
+
+    function updateStats() {
+        document.getElementById('ui-total').innerText = db.length;
+        document.getElementById('ui-sel').innerText = db.filter(p => p.selected).length;
+    }
+
+    function selectAll(v) { db.forEach(p => p.selected = v); render(); }
+    function clearAll() { if(confirm("¿Vaciar?")) { db = []; render(); } }
+
+    async function downloadZip(selectedOnly) {
+        const zip = new JSZip();
+        const targets = selectedOnly ? db.filter(p => p.selected) : db;
+        if (!targets.length) return alert("Nada que bajar");
+        targets.forEach(p => zip.file(p.fixedName || p.currentName || p.origName, p.file));
+        const b = await zip.generateAsync({type:"blob"});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(b); a.download = "pack.zip"; a.click();
+    }
+</script>
+</body>
+</html>
